@@ -191,6 +191,7 @@ class Trainer:
                 self.save_checkpoint(epoch, val_loss, tag="best")
 
             self.save_checkpoint(epoch, val_loss, tag="last")
+            self._save_history()  # save every epoch — survive Colab cutoff
 
             marker = " *" if improved else ""
             print(
@@ -204,7 +205,6 @@ class Trainer:
                 break
 
         print(f"\nTraining complete. Best val loss: {self.best_val_loss:.6f}")
-        self._save_history()
 
     def _save_history(self):
         path = self.checkpoint_dir / "history.json"
