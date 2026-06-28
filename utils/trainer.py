@@ -153,10 +153,16 @@ class Trainer:
         self.model.eval()
         total_loss = 0.0
         for batch in self.val_loader:
-            x = batch.to(self.device, non_blocking=True)
-            with autocast("cuda", enabled=self.use_amp):
-                x_hat = self.model(x)
-                loss = self.criterion(x_hat, x)
+            # In Trainer._train_epoch(), replace:
+            #   x = batch.to(self.device)
+            #   x_hat = self.model(x)
+            #   loss = self.criterion(x_hat, x)
+            #
+            # With:
+
+            x_noisy, x_clean = batch[0].to(self.device), batch[1].to(self.device)
+            x_hat = self.model(x_noisy)
+            loss = self.criterion(x_hat, x_clean)
             total_loss += loss.item()
         return total_loss / len(self.val_loader)
 
