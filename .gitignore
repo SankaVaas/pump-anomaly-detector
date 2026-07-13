@@ -19,7 +19,6 @@ data/processed/
 
 # Notebooks output
 notebooks/.ipynb_checkpoints/
-*.png
 
 # IDE
 .vscode/
