@@ -14,6 +14,7 @@ import streamlit as st
 import numpy as np
 import requests
 import time
+import scipy.io
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 API_BASE    = "http://localhost:8000"
@@ -125,18 +126,57 @@ def score_card_html(score, threshold, is_anomaly=None, label="Reconstruction err
         <span class="status-badge {badge_cls}">{badge_text}</span>
     </div>"""
 
+@st.cache_data
 def demo_normal_signal() -> np.ndarray:
-    t   = np.arange(WINDOW_SIZE) / 12000
-    rng = np.random.default_rng(0)
-    return (0.8 * np.sin(2*np.pi*50*t) + 0.4*np.sin(2*np.pi*150*t)
-            + rng.normal(0, 0.03, WINDOW_SIZE)).astype(np.float32)
+    """
+    Download one 512-sample window from the CWRU normal baseline (97.mat).
+    This is real bearing vibration data the model was trained on.
+    Falls back to synthetic if download fails.
+    """
+    try:
+        import urllib.request, io, tempfile, os
+        import scipy.io
+        url  = "https://engineering.case.edu/sites/default/files/97.mat"
+        with tempfile.NamedTemporaryFile(suffix=".mat", delete=False) as tmp:
+            urllib.request.urlretrieve(url, tmp.name)
+            mat = scipy.io.loadmat(tmp.name)
+        os.unlink(tmp.name)
+        key = next(k for k in mat if "DE_time" in k)
+        sig = mat[key].ravel().astype(np.float32)
+        return sig[:WINDOW_SIZE]
+    except Exception:
+        # Fallback: synthetic normal
+        t   = np.arange(WINDOW_SIZE) / 12000
+        rng = np.random.default_rng(0)
+        return (0.8*np.sin(2*np.pi*50*t) + 0.4*np.sin(2*np.pi*150*t)
+                + rng.normal(0, 0.03, WINDOW_SIZE)).astype(np.float32)
 
+
+@st.cache_data
 def demo_fault_signal() -> np.ndarray:
-    t   = np.arange(WINDOW_SIZE) / 12000
-    rng = np.random.default_rng(1)
-    return (0.8 * np.sin(2*np.pi*50*t)
-            + 3.0 * np.sin(2*np.pi*105*t) * 0.5*(1+np.sin(2*np.pi*2*t))
-            + rng.normal(0, 0.03, WINDOW_SIZE)).astype(np.float32)
+    """
+    Download one 512-sample window from CWRU ball fault (105.mat).
+    This is real bearing fault data the model was evaluated on.
+    Falls back to synthetic if download fails.
+    """
+    try:
+        import urllib.request, tempfile, os
+        import scipy.io
+        url  = "https://engineering.case.edu/sites/default/files/105.mat"
+        with tempfile.NamedTemporaryFile(suffix=".mat", delete=False) as tmp:
+            urllib.request.urlretrieve(url, tmp.name)
+            mat = scipy.io.loadmat(tmp.name)
+        os.unlink(tmp.name)
+        key = next(k for k in mat if "DE_time" in k)
+        sig = mat[key].ravel().astype(np.float32)
+        return sig[:WINDOW_SIZE]
+    except Exception:
+        # Fallback: synthetic fault
+        t   = np.arange(WINDOW_SIZE) / 12000
+        rng = np.random.default_rng(1)
+        return (0.8*np.sin(2*np.pi*50*t)
+                + 3.0*np.sin(2*np.pi*105*t)*0.5*(1+np.sin(2*np.pi*2*t))
+                + rng.normal(0, 0.03, WINDOW_SIZE)).astype(np.float32)
 
 # ── Sidebar ─────────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -205,30 +245,38 @@ tab1, tab2, tab3 = st.tabs(["⚡ Single window", "📈 Live session", "📋 Batc
 # ══════════════════════════════════════════════════════════════════════════════
 with tab1:
     st.markdown("#### Single window scoring")
-    st.markdown('<div class="alert-info">Enter exactly 512 comma-separated vibration samples.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="alert-info">Use a demo button to load and score instantly, or paste 512 samples manually.</div>', unsafe_allow_html=True)
 
     col_input, col_result = st.columns([3, 2])
 
     with col_input:
         c1, c2 = st.columns(2)
+        demo_clicked = None
         if c1.button("Demo — normal signal"):
-            sig = demo_normal_signal()
-            st.session_state["sw_input"] = ",".join(f"{v:.6f}" for v in sig)
+            demo_clicked = "normal"
+            st.session_state["sw_prefill"] = ",".join(
+                f"{v:.6f}" for v in demo_normal_signal()
+            )
         if c2.button("Demo — fault signal"):
-            sig = demo_fault_signal()
-            st.session_state["sw_input"] = ",".join(f"{v:.6f}" for v in sig)
+            demo_clicked = "fault"
+            st.session_state["sw_prefill"] = ",".join(
+                f"{v:.6f}" for v in demo_fault_signal()
+            )
 
+        # Always read from sw_prefill so the text area reflects
+        # exactly which demo was last loaded
         raw = st.text_area(
-            f"512 samples (comma-separated)",
-            value=st.session_state.get("sw_input", ""),
+            "512 samples (comma-separated)",
+            value=st.session_state.get("sw_prefill", ""),
             height=180,
             placeholder="0.012, -0.034, 0.056, ...",
-            key="sw_text",
         )
+
         score_btn = st.button("Score this window", type="primary", key="sw_btn")
+        auto_score = demo_clicked is not None
 
     with col_result:
-        if score_btn and raw.strip():
+        if (score_btn or auto_score) and raw.strip():
             try:
                 values = parse_floats(raw)
                 if len(values) != WINDOW_SIZE:
